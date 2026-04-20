@@ -245,5 +245,5 @@ plt.tight_layout()
 plt.savefig("dyTACFL_results.png", dpi=150)
 plt.show()
 
-print(f"\nFinal RMSE : {server.rmse_history[-1]:.4f} kWh")
-print(f"Best  RMSE : {min(server.rmse_history):.4f} kWh")
+print(f"\nFinal RMSE : {server.rmse_history[-1]:.4f}")
+print(f"Best  RMSE : {min(server.rmse_history):.4f}")
