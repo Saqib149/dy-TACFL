@@ -67,7 +67,7 @@ dy-TACFL/
 ## Dataset
 
 **EV Charging Station Boulder (EVCSBO)**  
-- 15 charging stations, ~51,577 sessions  
+- 38 charging stations, ~105,577 sessions  
 - Features: station ID, postal code, start time, end time, charging duration, energy consumption  
 - Target: `Consumption` (kWh)
 
