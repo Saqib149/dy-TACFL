@@ -45,7 +45,7 @@ dy-TACFL/
 
 ### dy-TACFL Pipeline
 
-1. **Data**: EV charging session records from 15 stations — each station is one FL client (non-IID)
+1. **Data**: EV charging session records from 38 stations — each station is one FL client (non-IID)
 2. **Feature engineering**: `St_Name`, `Postal_Code`, `week_number`, `year`, `TC_Time` → StandardScaler normalized
 3. **LSTM model**: 2-layer LSTM (hidden=64) + FC regression head per cluster
 4. **Per-round training loop**:
