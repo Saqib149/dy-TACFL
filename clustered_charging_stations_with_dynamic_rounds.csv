@@ -1,0 +1,21 @@
+St_Name,Initial_Cluster,Dynamic_Cluster_Round_1,Dynamic_Cluster_Round_2,Dynamic_Cluster_Round_3,Dynamic_Cluster_Round_4,Dynamic_Cluster_Round_5,Dynamic_Cluster_Round_6,Dynamic_Cluster_Round_7,Dynamic_Cluster_Round_8,Dynamic_Cluster_Round_9,Dynamic_Cluster_Round_10,Dynamic_Cluster_Round_11,Dynamic_Cluster_Round_12,Dynamic_Cluster_Round_13,Dynamic_Cluster_Round_14,Dynamic_Cluster_Round_15,Dynamic_Cluster_Round_16,Dynamic_Cluster_Round_17,Dynamic_Cluster_Round_18,Dynamic_Cluster_Round_19,Dynamic_Cluster_Round_20,Dynamic_Cluster_Round_21,Dynamic_Cluster_Round_22,Dynamic_Cluster_Round_23,Dynamic_Cluster_Round_24,Dynamic_Cluster_Round_25,Dynamic_Cluster_Round_26,Dynamic_Cluster_Round_27,Dynamic_Cluster_Round_28,Dynamic_Cluster_Round_29,Dynamic_Cluster_Round_30
+BOULDER / ALPINE ST1,0,4,4,4,4,4,4,4,4,4,4,5,5,5,6,7,7,7,7,7,7,8,8,8,8,8,8,9,9,9,9
+BOULDER / ATRIUM ST1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+BOULDER / BASELINE ST1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3
+BOULDER / CARPENTER PARK1,1,6,6,6,6,6,6,6,6,6,6,7,7,7,8,9,9,9,9,10,10,11,12,12,12,12,12,13,13,14,14
+BOULDER / CARPENTER PARK2,0,6,6,6,6,6,6,6,6,6,6,7,7,7,8,9,9,9,9,10,10,11,11,11,11,11,11,12,12,12,12
+BOULDER / EAST REC,3,3,3,3,3,3,3,3,3,3,3,3,3,3,4,5,5,5,5,5,5,6,6,6,6,6,6,7,7,7,7
+BOULDER / FACILITIES ST1,0,5,5,5,5,5,5,5,5,5,5,6,6,6,7,8,8,8,8,9,9,10,10,10,10,10,10,11,11,11,11
+BOULDER / N BOULDER REC 1,2,7,7,7,7,7,7,7,7,7,7,8,8,8,9,10,10,10,10,11,11,12,13,13,13,13,13,14,14,15,15
+BOULDER / REC CENTER ST1,3,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+BOULDER / REC CENTER ST2,2,8,8,8,8,8,8,8,9,9,9,10,10,10,11,12,12,12,13,14,14,15,16,16,16,16,16,17,17,18,18
+BOULDER / VALMONT ST1,0,8,8,8,8,8,8,8,9,9,9,10,10,11,12,13,13,13,14,15,15,16,17,17,17,17,17,18,18,19,19
+BOULDER / VALMONT ST2,1,6,6,6,6,6,6,6,6,6,6,7,7,7,8,9,9,9,9,10,10,11,11,11,11,11,11,12,12,13,13
+COMM VITALITY / 1000WALNUT1,3,7,7,7,7,7,7,7,8,8,8,9,9,9,10,11,11,11,12,13,13,14,15,15,15,15,15,16,16,17,17
+COMM VITALITY / 1000WALNUT2,0,2,2,2,2,2,2,2,2,2,2,2,2,2,3,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
+COMM VITALITY / 1100WALNUT1,2,3,3,3,3,3,3,3,3,3,3,4,4,4,5,6,6,6,6,6,6,7,7,7,7,7,7,8,8,8,8
+COMM VITALITY / 1104 SPRUCE1,2,3,3,3,3,3,3,3,3,3,3,3,3,3,4,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5
+COMM VITALITY / 1400 WALNUT1,2,9,9,9,9,9,9,9,10,10,10,11,11,12,13,14,14,14,15,16,16,17,18,18,18,18,18,19,19,20,20
+COMM VITALITY / 1500PEARL1,2,3,3,3,3,3,3,3,3,3,3,3,3,3,4,5,5,5,5,5,5,5,5,5,5,5,5,6,6,6,6
+COMM VITALITY / 1500PEARL2,0,7,7,7,7,7,7,7,7,7,7,8,8,8,9,10,10,10,11,12,12,13,14,14,14,14,14,15,15,16,16
+COMM VITALITY / BOULDER JCTN,0,4,4,4,4,4,4,4,4,4,4,5,5,5,6,7,7,7,7,8,8,9,9,9,9,9,9,10,10,10,10
