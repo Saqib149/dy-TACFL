@@ -5,7 +5,6 @@ import pandas as pd
 import random
 import copy
 import matplotlib.pyplot as plt
-
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
@@ -278,7 +277,6 @@ ax2.set_xlabel("Communication Rounds")
 ax2.set_ylabel("Silhouette Score")
 ax2.legend()
 ax2.grid(True)
-
 plt.tight_layout()
 plt.savefig("dyTACFL_results.png", dpi=150)
 plt.show()
