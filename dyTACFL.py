@@ -13,15 +13,17 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 
 # ── HYPERPARAMETERS ───────────────────────────────────────────────
-LOOKBACK      = 23
 NUM_CLUSTERS  = 3
 NUM_ROUNDS    = 100
-LOCAL_EPOCHS  = 3
+LOCAL_EPOCHS  = 2
 LEARNING_RATE = 0.001
 BATCH_SIZE    = 64
+SIL_THRESHOLD = 0.6
+MU            = 0.01   # FedProx proximal coefficient
 
-FEATURE_COLS  = ['St_Name', 'Postal_Code', 'week_number', 'year', 'TC_Time']
-TARGET_COL    = 'Consumption'
+FEATURE_COLS = ['St_Name', 'Postal_Code', 'hour', 'dayofweek', 'week_number', 'TC_Time']
+TARGET_COL   = 'Consumption'
+INPUT_SIZE   = len(FEATURE_COLS)
 
 # ── SEED ──────────────────────────────────────────────────────────
 def set_seed(seed=42):
@@ -37,90 +39,102 @@ def load_data(path):
     df = df.dropna()
 
     df['St_Time']     = pd.to_datetime(df['St_Time'])
+    df['hour']        = df['St_Time'].dt.hour
+    df['dayofweek']   = df['St_Time'].dt.dayofweek
     df['week_number'] = df['St_Time'].dt.isocalendar().week.astype(int)
-    df['year']        = df['St_Time'].dt.year - df['St_Time'].dt.year.min()  # relative year
     df['TC_Time']     = pd.to_timedelta(df['TC_Time']).dt.total_seconds()
     df['St_Name']     = df['St_Name'].astype('category').cat.codes
     df['Postal_Code'] = df['Postal_Code'].astype('category').cat.codes
 
-    # Scale ALL features — critical for LSTM convergence
-    scaler = StandardScaler()
-    df[FEATURE_COLS] = scaler.fit_transform(df[FEATURE_COLS].values)
+    station_raw = {}
+    all_X_train = []
 
-    # Build per-station datasets for proper non-IID FL
-    # Sort each station by time so sequences are temporally ordered
-    station_datasets = {}
-    for sid in df['St_Name'].unique():
-        sdf = df[df['St_Name'] == sid].sort_values('St_Time').reset_index(drop=True)
+    for sid in sorted(df['St_Name'].unique()):
+        sdf = df[df['St_Name'] == sid].reset_index(drop=True)
+        if len(sdf) < 50:
+            continue
         X = sdf[FEATURE_COLS].values.astype(float)
         y = sdf[TARGET_COL].values.astype(float)
+        X_tr, X_te, y_tr, y_te = train_test_split(
+            X, y, test_size=0.1, random_state=42)
+        all_X_train.append(X_tr)
+        station_raw[sid] = (X_tr, X_te, y_tr, y_te)
 
-        if len(X) <= LOOKBACK:
-            continue
+    # Fit scaler on all training data
+    scaler = StandardScaler()
+    scaler.fit(np.concatenate(all_X_train))
 
-        X_seq, y_seq = [], []
-        for i in range(len(X) - LOOKBACK):
-            X_seq.append(X[i:i + LOOKBACK])
-            y_seq.append(y[i + LOOKBACK])
+    station_data = {}
+    for sid, (X_tr, X_te, y_tr, y_te) in station_raw.items():
+        station_data[sid] = (scaler.transform(X_tr), scaler.transform(X_te),
+                             y_tr, y_te)
+    return station_data
 
-        station_datasets[sid] = (np.array(X_seq), np.array(y_seq))
-
-    return station_datasets
-
-# ── MODEL ─────────────────────────────────────────────────────────
-class LSTMRegressor(nn.Module):
-    def __init__(self, input_size=5, hidden_size=64, num_layers=2):
+# ── MODEL: simple MLP — no sequences, learns TC_Time→Consumption ──
+class MLPRegressor(nn.Module):
+    def __init__(self, input_size=INPUT_SIZE):
         super().__init__()
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers,
-                            batch_first=True, dropout=0.2)
-        self.fc   = nn.Linear(hidden_size, 1)
+        self.net = nn.Sequential(
+            nn.Linear(input_size, 128),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
+        )
 
     def forward(self, x):
-        out, _ = self.lstm(x)
-        return self.fc(out[:, -1, :])
+        return self.net(x).squeeze(-1)
 
 # ── CLIENT ────────────────────────────────────────────────────────
 class Client:
-    def __init__(self, train_data, station_id):
-        self.train_data = train_data
+    def __init__(self, train_ds, test_ds, station_id, y_std):
+        self.train_ds   = train_ds
+        self.test_ds    = test_ds
         self.station_id = station_id
-        self.model      = LSTMRegressor()
+        self.y_std      = y_std
+        self.model      = MLPRegressor()
 
     def train(self, cluster_weights):
         self.model.load_state_dict(copy.deepcopy(cluster_weights))
+        global_params = [p.detach().clone() for p in self.model.parameters()]
         self.model.train()
 
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=LEARNING_RATE)
-        loss_fn   = nn.MSELoss()
-        loader    = DataLoader(self.train_data, batch_size=BATCH_SIZE, shuffle=True)
+        opt     = torch.optim.Adam(self.model.parameters(),
+                                   lr=LEARNING_RATE, weight_decay=1e-4)
+        loss_fn = nn.MSELoss()
+        loader  = DataLoader(self.train_ds, batch_size=BATCH_SIZE, shuffle=True)
 
         for _ in range(LOCAL_EPOCHS):
             for X_b, y_b in loader:
-                optimizer.zero_grad()
-                pred = self.model(X_b).squeeze()
+                opt.zero_grad()
+                pred = self.model(X_b)
                 loss = loss_fn(pred, y_b)
+                # FedProx: keep local model close to cluster model
+                prox = sum((p - g).pow(2).sum()
+                           for p, g in zip(self.model.parameters(), global_params))
+                loss = loss + (MU / 2) * prox
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-                optimizer.step()
+                opt.step()
 
-        return copy.deepcopy(self.model.state_dict()), len(self.train_data)
+        return copy.deepcopy(self.model.state_dict()), len(self.train_ds)
 
     def weight_vector(self):
-        # Use FC layer weights for clustering (fast: 65 dims vs 51K)
+        # Last-layer weights for clustering (65 dims)
         return torch.cat([p.detach().view(-1)
-                          for p in self.model.fc.parameters()]).numpy()
+                          for p in self.model.net[-1].parameters()]).numpy()
 
 # ── SERVER ────────────────────────────────────────────────────────
 class Server:
-    def __init__(self, clients, test_data, y_std, num_clusters=NUM_CLUSTERS):
-        self.clients        = clients
-        self.test_data      = test_data
-        self.y_std          = y_std
-        self.num_clusters   = num_clusters
-        self.cluster_models = [LSTMRegressor() for _ in range(num_clusters)]
-        self.assignments    = np.array([i % num_clusters for i in range(len(clients))])
-        self.rmse_history   = []
-        self.sil_history    = []
+    def __init__(self, clients, num_clusters=NUM_CLUSTERS):
+        self.clients          = clients
+        self.num_clusters     = num_clusters
+        self.cluster_models   = [MLPRegressor() for _ in range(num_clusters)]
+        self.assignments      = np.array([i % num_clusters
+                                          for i in range(len(clients))])
+        self.rmse_history     = []
+        self.sil_history      = []
+        self.recluster_rounds = []
 
     def _fedavg(self, updates, sizes):
         total = sum(sizes)
@@ -129,33 +143,62 @@ class Server:
             agg[key] = sum(w[key] * (n / total) for w, n in zip(updates, sizes))
         return agg
 
-    def _recluster(self):
+    def _check_and_recluster(self, r):
+        """TACFL: re-cluster only when silhouette drops below threshold."""
         feats = np.stack([c.weight_vector() for c in self.clients])
-        km    = KMeans(n_clusters=self.num_clusters, n_init=3, random_state=42).fit(feats)
-        self.assignments = km.labels_
-        return silhouette_score(feats, km.labels_)
+        try:
+            cur_sil = silhouette_score(feats, self.assignments)
+        except Exception:
+            cur_sil = 0.0
 
-    def _evaluate(self):
-        loss_fn  = nn.MSELoss(reduction='sum')
-        loader   = DataLoader(self.test_data, batch_size=128)
-        best_mse = float('inf')
+        if cur_sil < SIL_THRESHOLD:
+            km = KMeans(n_clusters=self.num_clusters, n_init=3,
+                        random_state=r).fit(feats)
+            self.assignments = km.labels_
+            sil = silhouette_score(feats, self.assignments)
+            self.recluster_rounds.append(r + 1)
+            print(f"         [Re-clustered at round {r+1}: sil {cur_sil:.3f} < {SIL_THRESHOLD}]")
+        else:
+            sil = cur_sil
 
-        for model in self.cluster_models:
+        return sil
+
+    def _evaluate_cluster(self):
+        """Cluster model on each client's test data (initial baseline)."""
+        loss_fn = nn.MSELoss(reduction='sum')
+        total, n = 0.0, 0
+        for i, client in enumerate(self.clients):
+            model = self.cluster_models[self.assignments[i]]
             model.eval()
-            total, n = 0.0, 0
+            loader = DataLoader(client.test_ds, batch_size=256)
             with torch.no_grad():
                 for X_b, y_b in loader:
-                    total += loss_fn(model(X_b).squeeze(), y_b).item()
+                    total += loss_fn(model(X_b), y_b).item()
                     n     += len(y_b)
-            mse = total / n
-            if mse < best_mse:
-                best_mse = mse
+        return np.sqrt(total / n)
 
-        rmse_norm   = np.sqrt(best_mse)
-        rmse_actual = rmse_norm * self.y_std
-        return rmse_norm, rmse_actual
+    def _evaluate_local(self):
+        """Each client's LOCAL model on its own test data — matches paper's metric."""
+        loss_fn = nn.MSELoss(reduction='sum')
+        total, n = 0.0, 0
+        for client in self.clients:
+            client.model.eval()
+            loader = DataLoader(client.test_ds, batch_size=256)
+            with torch.no_grad():
+                for X_b, y_b in loader:
+                    total += loss_fn(client.model(X_b), y_b).item()
+                    n     += len(y_b)
+        return np.sqrt(total / n)
 
     def train(self, rounds=NUM_ROUNDS):
+        # Record initial RMSE (random model, before any training)
+        rmse0 = self._evaluate_cluster()
+        self.rmse_history.append(rmse0)
+        self.sil_history.append(0.0)
+        avg_std = np.mean([c.y_std for c in self.clients])
+        print(f"Round   0 | RMSE (norm): {rmse0:.4f} | "
+              f"RMSE (kWh): {rmse0 * avg_std:.4f}  [initial]")
+
         for r in range(rounds):
             updates = [[] for _ in range(self.num_clusters)]
             sizes   = [[] for _ in range(self.num_clusters)]
@@ -166,84 +209,81 @@ class Server:
                 updates[cid].append(w)
                 sizes[cid].append(n)
 
+            # FedAvg aggregation per cluster
             for c in range(self.num_clusters):
                 if updates[c]:
                     self.cluster_models[c].load_state_dict(
                         self._fedavg(updates[c], sizes[c])
                     )
 
-            sil = self._recluster()
-            rmse_norm, rmse_actual = self._evaluate()
-
-            self.rmse_history.append(rmse_actual)
+            # Evaluate CLUSTER model after aggregation (the federated model)
+            rmse_cluster = self._evaluate_cluster()
+            sil = self._check_and_recluster(r)
+            self.rmse_history.append(rmse_cluster)
             self.sil_history.append(sil)
-            print(f"Round {r+1:3d} | RMSE: {rmse_actual:.4f} kWh | "
-                  f"RMSE (norm): {rmse_norm:.4f} | Silhouette: {sil:.4f}")
+
+            print(f"Round {r+1:3d} | RMSE (norm): {rmse_cluster:.4f} | "
+                  f"RMSE (kWh): {rmse_cluster * avg_std:.4f} | "
+                  f"Silhouette: {sil:.4f}")
 
 # ── MAIN ──────────────────────────────────────────────────────────
-station_datasets = load_data("EVCSBO.csv")
-print(f"Loaded {len(station_datasets)} stations as clients\n")
+station_data = load_data("EVCSBO.csv")
+print(f"Stations (clients): {len(station_data)}\n")
 
-# Split each station into train/test, collect all test data centrally
-clients   = []
-all_X_test, all_y_test = [], []
-all_y_train = []
+all_y_train = np.concatenate([y_tr for _, _, y_tr, _ in station_data.values()])
+y_mean, y_std = all_y_train.mean(), all_y_train.std()
+print(f"Target — mean: {y_mean:.3f} kWh  std: {y_std:.3f} kWh\n")
 
-for sid, (X, y) in station_datasets.items():
-    X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.1, random_state=42)
-    all_y_train.append(y_tr)
-    all_X_test.append(X_te)
-    all_y_test.append(y_te)
+clients = []
+for sid, (X_tr, X_te, y_tr, y_te) in station_data.items():
+    y_tr_n = (y_tr - y_mean) / y_std
+    y_te_n = (y_te - y_mean) / y_std
 
-# Compute global normalisation stats from all training targets
-y_train_all = np.concatenate(all_y_train)
-y_mean, y_std = y_train_all.mean(), y_train_all.std()
-print(f"Target normalisation — mean: {y_mean:.3f}, std: {y_std:.3f}\n")
+    train_ds = TensorDataset(torch.tensor(X_tr, dtype=torch.float32),
+                              torch.tensor(y_tr_n, dtype=torch.float32))
+    test_ds  = TensorDataset(torch.tensor(X_te, dtype=torch.float32),
+                              torch.tensor(y_te_n, dtype=torch.float32))
+    clients.append(Client(train_ds, test_ds, station_id=sid, y_std=y_std))
 
-# Build client objects with normalised targets
-for i, (sid, (X, y)) in enumerate(station_datasets.items()):
-    X_tr, _, y_tr, _ = train_test_split(X, y, test_size=0.1, random_state=42)
-    y_tr_norm = (y_tr - y_mean) / y_std
-    ds = TensorDataset(
-        torch.tensor(X_tr, dtype=torch.float32),
-        torch.tensor(y_tr_norm, dtype=torch.float32)
-    )
-    clients.append(Client(ds, station_id=sid))
-
-# Central test set (normalised)
-X_test_all = np.concatenate(all_X_test)
-y_test_all = (np.concatenate(all_y_test) - y_mean) / y_std
-test_ds = TensorDataset(
-    torch.tensor(X_test_all, dtype=torch.float32),
-    torch.tensor(y_test_all, dtype=torch.float32)
-)
-
-print(f"Clients: {len(clients)} | Test samples: {len(test_ds)}\n")
-
-server = Server(clients, test_ds, y_std=y_std)
+server = Server(clients)
 server.train(rounds=NUM_ROUNDS)
 
 # ── PLOT ──────────────────────────────────────────────────────────
-def smooth(x, w=5):
-    return np.convolve(x, np.ones(w) / w, mode='valid')
+def smooth(data, w=5):
+    arr = np.array(data)
+    w   = min(w, len(arr))
+    if w <= 1:
+        return arr
+    return np.convolve(arr, np.ones(w) / w, mode='valid')
+
+rounds_axis   = list(range(0, NUM_ROUNDS + 1))
+smoothed_rmse = smooth(server.rmse_history)
+smooth_rounds = list(range(0, len(smoothed_rmse)))
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
 
-ax1.plot(smooth(server.rmse_history), color='tab:blue', linewidth=2)
+ax1.plot(smooth_rounds, smoothed_rmse, color='tab:blue', linewidth=2)
+for rr in server.recluster_rounds:
+    ax1.axvline(x=rr, color='red', linestyle='--', alpha=0.5, linewidth=1)
 ax1.set_title("dyTACFL — RMSE Convergence")
 ax1.set_xlabel("Communication Rounds")
-ax1.set_ylabel("RMSE (kWh)")
+ax1.set_ylabel("RMSE")
 ax1.grid(True)
 
-ax2.plot(server.sil_history, color='tab:orange', alpha=0.8, linewidth=1.5)
-ax2.set_title("Cluster Quality (Silhouette Score)")
+ax2.plot(rounds_axis, server.sil_history, color='tab:orange', linewidth=1.5)
+ax2.axhline(y=SIL_THRESHOLD, color='red', linestyle='--',
+            linewidth=1, label=f'Threshold ({SIL_THRESHOLD})')
+ax2.set_title("TACFL — Silhouette Score")
 ax2.set_xlabel("Communication Rounds")
 ax2.set_ylabel("Silhouette Score")
+ax2.legend()
 ax2.grid(True)
 
 plt.tight_layout()
 plt.savefig("dyTACFL_results.png", dpi=150)
 plt.show()
 
-print(f"\nFinal RMSE : {server.rmse_history[-1]:.4f} kWh")
-print(f"Best  RMSE : {min(server.rmse_history):.4f} kWh")
+print(f"\nInitial RMSE (round 0) : {server.rmse_history[0]:.4f}")
+print(f"Final   RMSE (round {NUM_ROUNDS}) : {server.rmse_history[-1]:.4f}")
+print(f"Best    RMSE           : {min(server.rmse_history):.4f}")
+print(f"Re-clustered at rounds : {server.recluster_rounds}")
